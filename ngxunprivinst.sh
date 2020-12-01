@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -e
 ##
 #  This script downloads and extracts nginx-plus and modules packages to 
@@ -135,6 +135,8 @@ if [ "$ACTION" = 'fetch' ] || [ "$ACTION" = 'list' ]; then
         echo "Check that certificate and key files exist."
         exit 1
     else
+        # check that wget is not a part of busybox package
+        [ `find $(which wget) -type f | wc -l` -eq 0 ] && echo "Please install wget package." && exit 1
         # lower security level for certificate check
         ldd $(which wget) | grep -q libgnutls || \
             echo "" | openssl s_client -servername plus-pkgs.nginx.com -cert $NGXCERT -key $NGXKEY -connect plus-pkgs.nginx.com:443 >/dev/null 2>&1 || \
@@ -152,7 +154,7 @@ cleanup() {
 ask() {
     echo "$1 {y/N}"
     if [ "$FORCE" != 'YES' ]; then
-        read -n1 -e a
+        read -r a
         if ! ( [ x$a = 'xy' ] || [ x$a = 'xY' ] ); then
             echo "Exiting..."
             cleanup
@@ -164,6 +166,8 @@ ask() {
 }
 
 fetch() {
+    a=$(list | wc -l)
+    [ $a -eq 1 ] && echo "OS ($DISTRO $RELEASE $ARCH) is not supported." && exit 1
     if [ "$DISTRO" = 'ubuntu' ] || [ "$DISTRO" = 'debian' ]; then
         if [ -z $VERSION ]; then
             NGXDEB=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/nginx-plus | cut -d '"' -f2 | egrep 'nginx-plus_[0-9][0-9]' | fgrep $RELEASE | fgrep $ARCH | sort | uniq | tail -1`
@@ -262,7 +266,7 @@ check_modules_deps() {
     DEPS_NEEDED="NO"
     for MODULE in `find $ABSPATH/usr/lib*/nginx/modules/ -type f`; do
         echo "Module installed: modules/`basename $MODULE`"
-        UNMET=$(ldd $MODULE | fgrep 'not found' | sort | uniq | cut -f2 | cut -d ' ' -f1 | tr '\n' ' ')
+        UNMET=$(ldd $MODULE 2>&1 | grep 'Error loading shared library\|=> not found' | sed -E 's/Error loading shared library (.+):.*/\1/g' | sed -E 's/ => not found//g' | sort | uniq | tr -d ': \t' | tr '\n' ' ')
         if [ ! -z $UNMET ]; then
             echo " >>> Module $MODULE have unmet dependencies: $UNMET" && DEPS_NEEDED="YES"
             UNMET=
@@ -315,6 +319,12 @@ extract() {
         [ -d $ABSPATH/etc/logrotate.d ] && rm -rf $ABSPATH/etc/logrotate.d
         cd $ABSPATH/etc/nginx
         ln -sfn ../../usr/lib*/nginx/modules modules
+        # check that nginx binary does not have unmet dependencies
+        if ! ldd $ABSPATH/usr/sbin/nginx > /dev/null 2>&1; then
+            echo "Please install all necessary dependencies to nginx binary" && \
+            echo "Use command \"ldd $ABSPATH/usr/sbin/nginx\" to check unmet dependencies." && \
+            exit 1
+        fi
         echo "Installation finished. You may run nginx with this command:"
         if [ `$ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d ' ' -f3 | cut -d/ -f2 | tr -d '.'` -ge 1195 ]; then
             echo "$ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -e $ABSPATH/var/log/nginx/error.log"
@@ -350,7 +360,7 @@ upgrade() {
         [ -d $TMPDIR/usr/lib64/ ] && cp -a $TMPDIR/usr/lib64/* $ABSPATH/usr/lib64/
         check_modules_deps
         echo "Performing binary seamless upgrade..."
-        pgrep -u $NGXUSER 'nginx|nginx-debug' >/dev/null \
+        ps x | grep -q '[n]ginx: master process' \
             && kill -s USR2 `cat $ABSPATH/var/run/nginx.pid` \
             && sleep 5 \
             && kill -s WINCH `cat $ABSPATH/var/run/nginx.pid.oldbin` \
@@ -361,7 +371,7 @@ upgrade() {
         [ -d $TMPDIR/usr/lib64/ ] && cp -a $TMPDIR/usr/lib64/* $ABSPATH/usr/lib64/
         check_modules_deps
         echo "Reloading nginx..."
-        pgrep -u $NGXUSER 'nginx|nginx-debug' >/dev/null && kill -s HUP `cat $ABSPATH/var/run/nginx.pid`
+        ps x | grep -q '[n]ginx: master process' && kill -s HUP `cat $ABSPATH/var/run/nginx.pid`
     fi
 }
 
@@ -382,7 +392,7 @@ case $ACTION in
         fetch
         ;;
     install)
-        if [ `pgrep -u $NGXUSER nginx | wc -l` -eq 0 ]; then
+        if [ `ps x | grep -c '[n]ginx: master process'` -eq 0 ]; then
             extract
         else
             echo "Stop running nginx processes or use 'upgrade' script option."
