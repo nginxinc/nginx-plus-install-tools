@@ -97,21 +97,21 @@ ARCH=x86_64
 
 if [ -f /etc/redhat-release ]; then
     RELEASE=`grep -Eo 'release [0-9]{1}' /etc/redhat-release | cut -d' ' -f2`
-    REPOURL=https://plus-pkgs.nginx.com/centos/$RELEASE/$ARCH/RPMS/
+    REPOURL=https://pkgs.nginx.com/plus/centos/$RELEASE/$ARCH/RPMS/
     DISTRO="RHEL/CentOS"
     SUFFIX="el"
 elif [ -f /etc/os-release ] && fgrep SLES /etc/os-release; then
     RELEASE=`grep -Eo 'VERSION="[0-9]{2}' /etc/os-release | cut -d'"' -f2`
-    REPOURL=https://plus-pkgs.nginx.com/sles/$RELEASE/$ARCH/RPMS/
+    REPOURL=https://pkgs.nginx.com/plus/sles/$RELEASE/$ARCH/RPMS/
     DISTRO="SLES"
     SUFFIX="sles"
 elif [ -f /etc/os-release ] && fgrep -q -i amazon /etc/os-release; then
     RELEASE=`grep -Eo 'VERSION=".+"' /etc/os-release | cut -d'"' -f2`
     if [ "$RELEASE" = "2" ]; then
-        REPOURL=https://plus-pkgs.nginx.com/amzn2/2/$ARCH/RPMS/
+        REPOURL=https://pkgs.nginx.com/plus/amzn2/2/$ARCH/RPMS/
         SUFFIX="amzn2"
     else
-        REPOURL=https://plus-pkgs.nginx.com/amzn/latest/$ARCH/RPMS/
+        REPOURL=https://pkgs.nginx.com/plus/amzn/latest/$ARCH/RPMS/
         SUFFIX="amzn1"
         RELEASE="1"
     fi
@@ -121,10 +121,10 @@ elif [ -f /usr/bin/dpkg ]; then
     [ `uname -m` = "aarch64" ] && ARCH=arm64
     DISTRO=`grep -E "^ID=" /etc/os-release | cut -d '=' -f2 | tr '[:upper:]' '[:lower:]'`
     RELEASE=`grep VERSION_CODENAME /etc/os-release | cut -d '=' -f2`
-    REPOURL=https://plus-pkgs.nginx.com/$DISTRO/pool/nginx-plus/n/
+    REPOURL=https://pkgs.nginx.com/plus/$DISTRO/pool/nginx-plus/n/
 elif [ -x /sbin/apk ]; then
     RELEASE=`grep -Eo 'VERSION_ID=[0-9]\.[0-9]{1,2}' /etc/os-release | cut -d'=' -f2`
-    REPOURL=https://plus-pkgs.nginx.com/alpine/v$RELEASE/main/$ARCH/
+    REPOURL=https://pkgs.nginx.com/plus/alpine/v$RELEASE/main/$ARCH/
     DISTRO="alpine"
 else
     echo "Cannot determine your operating system."
@@ -139,10 +139,10 @@ if [ "$ACTION" = 'fetch' ] || [ "$ACTION" = 'list' ]; then
         [ `find $(which wget) -type f | wc -l` -eq 0 ] && echo "Please install wget package." && exit 1
         # lower security level for certificate check
         ldd $(which wget) | grep -q libgnutls || \
-            echo "" | openssl s_client -servername plus-pkgs.nginx.com -cert $NGXCERT -key $NGXKEY -connect plus-pkgs.nginx.com:443 >/dev/null 2>&1 || \
+            echo "" | openssl s_client -servername pkgs.nginx.com -cert $NGXCERT -key $NGXKEY -connect pkgs.nginx.com:443 >/dev/null 2>&1 || \
             WGET='wget -q --ciphers DEFAULT@SECLEVEL=1'
-            if ! $WGET -O /dev/null --certificate=$NGXCERT --private-key=$NGXKEY https://plus-pkgs.nginx.com/ ; then
-                echo "Cannot connect to plus-pkgs.nginx.com, please check certificate and key."
+            if ! $WGET -O /dev/null --certificate=$NGXCERT --private-key=$NGXKEY https://pkgs.nginx.com/plus/ ; then
+                echo "Cannot connect to pkgs.nginx.com, please check certificate and key."
                 exit 1
             fi
     fi
@@ -377,7 +377,7 @@ upgrade() {
 
 list() {
     if [ "$DISTRO" = 'ubuntu' ] || [ "$DISTRO" = 'debian' ]; then
-        REPOURL=https://plus-pkgs.nginx.com/$DISTRO/pool/nginx-plus/n/nginx-plus
+        REPOURL=https://pkgs.nginx.com/plus/$DISTRO/pool/nginx-plus/n/nginx-plus
     fi
     echo "Versions available for $DISTRO $RELEASE $ARCH:"
     if [ "$DISTRO" = 'alpine' ] ; then
