@@ -238,7 +238,7 @@ fetch() {
             exit 1
         fi
         PLUS_RELEASE=$(echo $NGXPKG | grep -Eo '[0-9][0-9]' | head -1)
-        MODULES_PKGS=$($WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/ -O- | fgrep nginx-plus-module | fgrep -v debug | fgrep "$PLUS_RELEASE." | cut -d '"' -f2) ||:
+        MODULES_PKGS=$($WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/ -O- | fgrep nginx-plus-module | fgrep -v debug | fgrep "$PLUS_RELEASE+" | cut -d '"' -f2) ||:
         for MODPKG in $MODULES_PKGS; do
             echo "Downloading $MODPKG..."
             $WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/$MODPKG -O $MODPKG
