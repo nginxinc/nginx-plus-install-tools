@@ -323,7 +323,7 @@ getpathes() {
 	NGINXMODDIR=$ABSPATH/usr/local/lib/nginx/modules
     else
         NGINXSOURCEBIN=$TMPDIR/usr/sbin/nginx
-        NGINXSOURCEBIN=$ABSPATH/usr/sbin/nginx
+        NGINXTARGETBIN=$ABSPATH/usr/sbin/nginx
         NGINXETCDIR=$ABSPATH/etc
         NGINXCONF=$NGINXETCDIR/nginx/nginx.conf
 	NGINXMODDIR=$ABSPATH/usr/lib*/nginx/modules
