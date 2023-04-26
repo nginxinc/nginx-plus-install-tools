@@ -110,6 +110,9 @@ elif [ -f /etc/os-release ] && fgrep -q -i amazon /etc/os-release; then
     if [ "$RELEASE" = "2" ]; then
         REPOURL=https://pkgs.nginx.com/plus/amzn2/2/$ARCH/RPMS/
         SUFFIX="amzn2"
+    elif [ "$RELEASE" = "2023" ]; then
+        REPOURL=https://pkgs.nginx.com/plus/amzn/2023/$ARCH/RPMS/
+        SUFFIX="amzn2023"
     else
         REPOURL=https://pkgs.nginx.com/plus/amzn/latest/$ARCH/RPMS/
         SUFFIX="amzn1"
