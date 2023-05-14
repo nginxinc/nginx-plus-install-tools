@@ -33,15 +33,16 @@ NGXKEY=
 NGXPATH=
 CURDIR=`pwd`
 WGET="wget -q"
+SED="sed"
 REPOURL=
 HTTPPORT=8080
 FORCE="NO"
 
 about() {
-    sed -ne '3,/^##$/p' < $0 | sed 's/#//g'
+    $SED -ne '3,/^##$/p' < $0 | $SED 's/#//g'
 }
 usage() {
-    sed -ne '/^#  Usage/,/^##$/p' < $0 | sed 's/#//g'
+    $SED -ne '/^#  Usage/,/^##$/p' < $0 | $SED 's/#//g'
 }
 if [ $# -eq 0 ]; then
     about
@@ -129,6 +130,14 @@ elif [ -x /sbin/apk ]; then
     RELEASE=`grep -Eo 'VERSION_ID=[0-9]\.[0-9]{1,2}' /etc/os-release | cut -d'=' -f2`
     REPOURL=https://pkgs.nginx.com/plus/alpine/v$RELEASE/main/$ARCH/
     DISTRO="alpine"
+elif [ -x /usr/sbin/pkg -a -f /var/run/os-release ]; then
+    NAME=`grep "^NAME=.*" /var/run/os-release | cut -d'=' -f2`
+    RELEASE=`grep "^VERSION_ID=.*" /var/run/os-release | cut -d'=' -f2 | cut -d'.' -f1`
+    ARCH=`uname -p`
+    DISTRO="freebsd"
+    REPOURL=https://pkgs.nginx.com/plus/$DISTRO/$NAME:$RELEASE:$ARCH/latest/
+    SED="gsed"
+    [ `find $(which gsed) -type f | wc -l` -eq 0 ] && echo "Please install textproc/gsed package." && exit 1
 else
     echo "Cannot determine your operating system."
     exit 1
@@ -216,6 +225,27 @@ fetch() {
             echo "Downloading $MODAPK..."
             $WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/$MODAPK -O $MODAPK
         done
+    elif [ "$DISTRO" = 'freebsd' ]; then
+        if [ -z $VERSION ]; then
+            NGXPKG=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep 'nginx-plus-[0-9][0-9]' | sort | uniq | tail -1`
+	else
+            NGXPKG=nginx-plus-$VERSION.pkg
+        fi
+        echo "Downloading $NGXPKG..."
+        $WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/$NGXPKG -O $NGXPKG ||:
+        if [ ! -s $NGXPKG ]; then
+            echo "Wrong Nginx Plus version!"
+            list
+            rm $NGXPKG
+            cleanup
+            exit 1
+        fi
+        PLUS_RELEASE=$(echo $NGXPKG | grep -Eo '[0-9][0-9]' | head -1)
+        MODULES_PKGS=$($WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/ -O- | fgrep nginx-plus-module | fgrep -v debug | fgrep "$PLUS_RELEASE+" | cut -d '"' -f2) ||:
+        for MODPKG in $MODULES_PKGS; do
+            echo "Downloading $MODPKG..."
+            $WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/$MODPKG -O $MODPKG
+        done
     else
         if [ -z $VERSION ]; then
             NGXRPM=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep 'nginx-plus-[0-9][0-9]' | sort | uniq | tail -1`
@@ -250,8 +280,16 @@ prepare() {
         done
     elif [ "$DISTRO" = "alpine" ]; then
         for PKG in $FILES; do
-	        tar -C $TMPDIR -xf $PKG
+            tar -C $TMPDIR -xf $PKG
         done
+    elif [ "$DISTRO" = "freebsd" ]; then
+        for PKG in $FILES; do
+            tar -C $TMPDIR -xf $PKG
+        done
+        cp $TMPDIR/usr/local/etc/nginx/nginx.conf-dist \
+	   $TMPDIR/usr/local/etc/nginx/nginx.conf
+        cp $TMPDIR/usr/local/etc/nginx/mime.types-dist \
+	   $TMPDIR/usr/local/etc/nginx/mime.types
     else
         cp $FILES $TMPDIR/
         for PKG in $FILES; do
@@ -267,9 +305,9 @@ prepare() {
 
 check_modules_deps() {
     DEPS_NEEDED="NO"
-    for MODULE in `find $ABSPATH/usr/lib*/nginx/modules/ -type f`; do
+    for MODULE in `find $NGINXMODDIR/ -type f`; do
         echo "Module installed: modules/`basename $MODULE`"
-        UNMET=$(ldd $MODULE 2>&1 | grep 'Error loading shared library\|=> not found' | sed -E 's/Error loading shared library (.+):.*/\1/g' | sed -E 's/ => not found//g' | sort | uniq | tr -d ': \t' | tr '\n' ' ')
+        UNMET=$(ldd $MODULE 2>&1 | grep 'Error loading shared library\|=> not found' | $SED -E 's/Error loading shared library (.+):.*/\1/g' | $SED -E 's/ => not found//g' | sort | uniq | tr -d ': \t' | tr '\n' ' ')
         if [ ! -z $UNMET ]; then
             echo " >>> Module $MODULE have unmet dependencies: $UNMET" && DEPS_NEEDED="YES"
             UNMET=
@@ -279,65 +317,84 @@ check_modules_deps() {
 
 }
 
+getpathes() {
+    if [ $DISTRO = "freebsd" ] ; then
+        NGINXSOURCEBIN=$TMPDIR/usr/local/sbin/nginx
+        NGINXTARGETBIN=$ABSPATH/usr/local/sbin/nginx
+        NGINXETCDIR=$ABSPATH/usr/local/etc
+        NGINXCONF=$NGINXETCDIR/nginx/nginx.conf
+	NGINXMODDIR=$ABSPATH/usr/local/lib/nginx/modules
+    else
+        NGINXSOURCEBIN=$TMPDIR/usr/sbin/nginx
+        NGINXTARGETBIN=$ABSPATH/usr/sbin/nginx
+        NGINXETCDIR=$ABSPATH/etc
+        NGINXCONF=$NGINXETCDIR/nginx/nginx.conf
+	NGINXMODDIR=$ABSPATH/usr/lib*/nginx/modules
+    fi
+}
+
 extract() {
     ABSPATH=$(readlink -f $NGXPATH)
     if [ -d $ABSPATH ]; then
         ask "$ABSPATH already exists. Continue?"
     fi
     prepare
-    if [ -x $TMPDIR/usr/sbin/nginx ]; then
+    getpathes
+    if [ -x $NGINXSOURCEBIN ]; then
         # extract and configure nginx-plus package
-        if [ -f $ABSPATH/etc/nginx/nginx.conf ]; then
-            OLDVERSION=`$ABSPATH/usr/sbin/nginx -V 2>&1 | head -1 | cut -d' ' -f4`
+        if [ -f $NGINXCONF ]; then
+            OLDVERSION=`$NGINXSOURCEBIN -V 2>&1 | head -1 | cut -d' ' -f4`
             ask "Previous installation $OLDVERSION detected in $ABSPATH. Overwrite?"
             echo "Backing up configuration directory..."
-            mv $ABSPATH/etc $ABSPATH/etc.`date +'%Y%d%m%H%M%S'`
+            mv $NGINXETCDIR $NGINXETCDIR.`date +'%Y%d%m%H%M%S'`
         fi
         cp -a $TMPDIR/* $ABSPATH/
-        sed -i "s|\([ ^t]*access_log[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|\([ ^t]*error_log[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|\([ ^t]*pid[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|\([ ^t]*include[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|\([ ^t]*root[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|\([ ^t]*user[ ^t]*\)nginx;||" $ABSPATH/etc/nginx/nginx.conf
+        $SED -i "s|\([ ^t]#?*access_log[ ^t]*\)/|\1$ABSPATH/|" $NGINXCONF
+        $SED -i "s|\([ ^t]*error_log[ ^t]*\)/|\1$ABSPATH/|" $NGINXCONF
+        $SED -i "s|\([ ^t]*pid[ ^t]*\)/|\1$ABSPATH/|" $NGINXCONF
+        $SED -i "s|\([ ^t]*include[ ^t]*\)/|\1$ABSPATH/|" $NGINXCONF
+        $SED -i "s|\([ ^t]*root[ ^t]*\)/|\1$ABSPATH/|" $NGINXCONF
+        $SED -i "s|\([ ^t]*user[ ^t]*\)nginx;||" $NGINXCONF
 
-        sed -i "s|http {|http {\n    client_body_temp_path $ABSPATH/var/cache/nginx/client_temp;|" \
-            $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|http {|http {\n    proxy_temp_path       $ABSPATH/var/cache/nginx/proxy_temp_path;|" \
-            $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|http {|http {\n    fastcgi_temp_path     $ABSPATH/var/cache/nginx/fastcgi_temp;|" \
-            $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|http {|http {\n    uwsgi_temp_path       $ABSPATH/var/cache/nginx/uwsgi_temp;|" \
-            $ABSPATH/etc/nginx/nginx.conf
-        sed -i "s|http {|http {\n    scgi_temp_path        $ABSPATH/var/cache/nginx/scgi_temp;|" \
-            $ABSPATH/etc/nginx/nginx.conf
+        $SED -i "s|http {|http {\n    client_body_temp_path $ABSPATH/var/cache/nginx/client_temp;|" \
+            $NGINXCONF
+        $SED -i "s|http {|http {\n    proxy_temp_path       $ABSPATH/var/cache/nginx/proxy_temp_path;|" \
+            $NGINXCONF
+        $SED -i "s|http {|http {\n    fastcgi_temp_path     $ABSPATH/var/cache/nginx/fastcgi_temp;|" \
+            $NGINXCONF
+        $SED -i "s|http {|http {\n    uwsgi_temp_path       $ABSPATH/var/cache/nginx/uwsgi_temp;|" \
+            $NGINXCONF
+        $SED -i "s|http {|http {\n    scgi_temp_path        $ABSPATH/var/cache/nginx/scgi_temp;|" \
+            $NGINXCONF
 
-        sed -i "s|\([ ^t]*access_log[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/conf.d/default.conf
-        sed -i "s|\([ ^t]*root[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/conf.d/default.conf
-        sed -i "s|\([ ^t]*listen[ ^t]*\)80|\1$HTTPPORT|" $ABSPATH/etc/nginx/conf.d/default.conf
+        if [ $DISTRO != "freebsd" ] ; then
+            $SED -i "s|\([ ^t]*access_log[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/conf.d/default.conf
+            $SED -i "s|\([ ^t]*root[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/conf.d/default.conf
+            $SED -i "s|\([ ^t]*listen[ ^t]*\)80|\1$HTTPPORT|" $ABSPATH/etc/nginx/conf.d/default.conf
+	fi
 
         mkdir -p $ABSPATH/var/run
         mkdir -p $ABSPATH/var/log/nginx
         mkdir -p $ABSPATH/var/cache/nginx
         [ -d $ABSPATH/etc/logrotate.d ] && rm -rf $ABSPATH/etc/logrotate.d
-        cd $ABSPATH/etc/nginx
+        cd $NGINXETCDIR
         ln -sfn ../../usr/lib*/nginx/modules modules
         # check that nginx binary does not have unmet dependencies
-        if ! ldd $ABSPATH/usr/sbin/nginx > /dev/null 2>&1; then
+        if ! ldd $NGINXTARGETBIN > /dev/null 2>&1; then
             echo "Please install all necessary dependencies to nginx binary" && \
-            echo "Use command \"ldd $ABSPATH/usr/sbin/nginx\" to check unmet dependencies." && \
+            echo "Use command \"ldd $NGINXTARGETBIN\" to check unmet dependencies." && \
             exit 1
         fi
         echo "Installation finished. You may run nginx with this command:"
-        if [ `$ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d ' ' -f3 | cut -d/ -f2 | tr -d '.'` -ge 1195 ]; then
-            echo "$ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -e $ABSPATH/var/log/nginx/error.log"
+        if [ `$NGINXTARGETBIN -v 2>&1 | cut -d ' ' -f3 | cut -d/ -f2 | tr -d '.'` -ge 1195 ]; then
+            echo "$NGINXTARGETBIN -p $NGINXETCDIR -c nginx.conf -e $ABSPATH/var/log/nginx/error.log"
         else
-            echo "$ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf"
+            echo "$NGINXTARGETBIN -p $NGINXETCDIR -c nginx.conf"
             echo "You may safely ignore message about /var/log/nginx/error.log or create this file writable by your user."
         fi
     else
         # extract module only in existing directory
-        if [ ! -x $ABSPATH/usr/sbin/nginx ]; then
+        if [ ! -x $NGINXTARGETBIN ]; then
             echo "Please use existing installation directory or specify nginx-plus package in arguments too."
             exit 1
         else
@@ -384,7 +441,9 @@ list() {
     fi
     echo "Versions available for $DISTRO $RELEASE $ARCH:"
     if [ "$DISTRO" = 'alpine' ] ; then
-        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -Eo "nginx-plus-[0-9][0-9]-r[1-9]" | sed 's/nginx-plus-//g' | sort | uniq
+        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -Eo "nginx-plus-[0-9][0-9]-r[1-9]" | $SED 's/nginx-plus-//g' | sort | uniq
+    elif [ "$DISTRO" = 'freebsd' ] ; then
+        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -Eo "nginx-plus-[0-9][0-9]_[1-9]" | $SED 's/nginx-plus-//g' | sort | uniq
     else
     	$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -E "nginx-plus[_-][0-9][0-9]-[1-9]" | fgrep $ARCH | fgrep $RELEASE | grep -Eo '[0-9][0-9]-[1-9]' | sort | uniq
     fi
