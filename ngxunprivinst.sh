@@ -328,8 +328,12 @@ extract() {
             echo "Use command \"ldd $ABSPATH/usr/sbin/nginx\" to check unmet dependencies." && \
             exit 1
         fi
+        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
+        if [ $TARGETVER -ge 31 ]; then
+            echo "mgmt { uuid_file $ABSPATH/var/lib/nginx/nginx.id; }" >> $ABSPATH/etc/nginx/nginx.conf
+        fi
         echo "Installation finished. You may run nginx with this command:"
-        if [ `$ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d ' ' -f3 | cut -d/ -f2 | tr -d '.'` -ge 1195 ]; then
+        if [ $TARGETVER -ge 23 ]; then
             echo "$ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -e $ABSPATH/var/log/nginx/error.log"
         else
             echo "$ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf"
@@ -362,6 +366,12 @@ upgrade() {
         [ -d $TMPDIR/usr/lib/ ] && cp -a $TMPDIR/usr/lib/* $ABSPATH/usr/lib/
         [ -d $TMPDIR/usr/lib64/ ] && cp -a $TMPDIR/usr/lib64/* $ABSPATH/usr/lib64/
         check_modules_deps
+        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
+        if [ $TARGETVER -ge 31 ]; then
+            if ! $ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -T 2>&1 | grep 'uuid_file' | grep -vE '^(.*)#.*uuid_file' >/dev/null; then
+                echo "mgmt { uuid_file $ABSPATH/var/lib/nginx/nginx.id; }" >> $ABSPATH/etc/nginx/nginx.conf
+            fi
+        fi
         echo "Performing binary seamless upgrade..."
         ps x | grep -q '[n]ginx: master process' \
             && kill -s USR2 `cat $ABSPATH/var/run/nginx.pid` \
