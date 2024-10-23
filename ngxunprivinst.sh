@@ -9,7 +9,7 @@ set -e
 #  For RPM-based distros, make sure that you have rpm2cpio installed.
 ##
 #  Usage: ./ngxunprivinst.sh fetch -c <cert_file> -k <key_file> [-v <version>]
-#         ./ngxunprivinst.sh (install|upgrade) [-y] -p <path> <file> <file> ...
+#         ./ngxunprivinst.sh (install|upgrade) [-y] -p <path> -j <license> <file> <file> ...
 #         ./ngxunprivinst.sh list -c <cert_file> -k <key_file>
 #
 #    fetch      - download Nginx Plus and modules packages
@@ -21,6 +21,7 @@ set -e
 #    cert_file - path to your subscription certificate file
 #    key_file  - path to your subscription private key file
 #    path      - nginx prefix path
+#    license   - path to your subscription license.jwt file
 #    version   - nginx package version (default: latest available)
 #    -y        - answers "yes" to all questions
 ##
@@ -30,6 +31,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:
 NGXUSER=`id -nu`
 NGXCERT=
 NGXKEY=
+NGXLICENSE=
 NGXPATH=
 CURDIR=`pwd`
 WGET="wget -q"
@@ -56,12 +58,13 @@ else
     shift
 fi
 
-args=`getopt c:k:p:v:y $*`
+args=`getopt c:j:k:p:v:y $*`
 
 for opt
 do
     case "$opt" in
         -c) NGXCERT=$2; shift; shift;;
+        -j) NGXLICENSE=$2; shift; shift;;
         -k) NGXKEY=$2;  shift; shift;;
         -p) NGXPATH=$2; shift; shift;;
         -v) VERSION=$2; shift; shift;;
@@ -81,6 +84,11 @@ if [ "$NGXPATH" = '' ] && ( [ "$ACTION" = 'install' ] || [ "$ACTION" = 'upgrade'
         echo "Please make sure that you have dpkg or rpm2cpio packages installed"
         exit 1
     fi
+fi
+
+if [ "$NGXLICENSE" = '' ] && ( [ "$ACTION" = 'install' ] || [ "$ACTION" = 'upgrade' ] ) ; then
+    echo "-j option is mandatory for install/upgrade"
+    exit 1
 fi
 
 FILES=$*
@@ -244,6 +252,7 @@ fetch() {
 prepare() {
     mkdir -p $ABSPATH
     TMPDIR=`mktemp -dq /tmp/nginx-prefix.XXXXXXXX`
+    cp $NGXLICENSE $TMPDIR/license.jwt
     if [ "$DISTRO" = "debian" ] || [ "$DISTRO" = "ubuntu" ]; then
         for PKG in $FILES; do
             dpkg -x $PKG $TMPDIR
@@ -329,7 +338,11 @@ extract() {
             exit 1
         fi
         TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
-        if [ $TARGETVER -ge 31 ]; then
+        if [ $TARGETVER -ge 33 ]; then
+            mv $TMPDIR/license.jwt $ABSPATH/etc/nginx/license.jwt
+            echo "mgmt { license_token $ABSPATH/etc/nginx/license.jwt; }" >> $ABSPATH/etc/nginx/nginx.conf
+        fi
+        if [ $TARGETVER -ge 31 -a $TARGETVER -lt 33 ]; then
             echo "mgmt { uuid_file $ABSPATH/var/lib/nginx/nginx.id; }" >> $ABSPATH/etc/nginx/nginx.conf
         fi
         echo "Installation finished. You may run nginx with this command:"
@@ -367,7 +380,13 @@ upgrade() {
         [ -d $TMPDIR/usr/lib64/ ] && cp -a $TMPDIR/usr/lib64/* $ABSPATH/usr/lib64/
         check_modules_deps
         TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
-        if [ $TARGETVER -ge 31 ]; then
+        if [ $TARGETVER -ge 33 ]; then
+            if ! $ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -T 2>&1 | grep 'license_token' | grep -vE '^(.*)#.*license_token' >/dev/null; then
+                cp $NGXLICENSE $ABSPATH/etc/nginx/license.jwt
+                echo "mgmt { license_token $ABSPATH/etc/nginx/license.jwt; }" >> $ABSPATH/etc/nginx/nginx.conf
+            fi
+        fi
+        if [ $TARGETVER -ge 31 -a $TARGETVER -lt 33 ]; then
             if ! $ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -T 2>&1 | grep 'uuid_file' | grep -vE '^(.*)#.*uuid_file' >/dev/null; then
                 echo "mgmt { uuid_file $ABSPATH/var/lib/nginx/nginx.id; }" >> $ABSPATH/etc/nginx/nginx.conf
             fi
