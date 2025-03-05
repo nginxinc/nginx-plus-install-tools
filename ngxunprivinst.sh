@@ -9,7 +9,7 @@ set -e
 #  For RPM-based distros, make sure that you have rpm2cpio installed.
 ##
 #  Usage: ./ngxunprivinst.sh fetch -c <cert_file> -k <key_file> [-v <version>]
-#         ./ngxunprivinst.sh (install|upgrade) [-y] -p <path> <file> <file> ...
+#         ./ngxunprivinst.sh (install|upgrade) [-y] -p <path> -j <license> <file> <file> ...
 #         ./ngxunprivinst.sh list -c <cert_file> -k <key_file>
 #
 #    fetch      - download Nginx Plus and modules packages
@@ -21,6 +21,7 @@ set -e
 #    cert_file - path to your subscription certificate file
 #    key_file  - path to your subscription private key file
 #    path      - nginx prefix path
+#    license   - path to your subscription license.jwt file
 #    version   - nginx package version (default: latest available)
 #    -y        - answers "yes" to all questions
 ##
@@ -30,6 +31,7 @@ PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:
 NGXUSER=`id -nu`
 NGXCERT=
 NGXKEY=
+NGXLICENSE=
 NGXPATH=
 CURDIR=`pwd`
 WGET="wget -q"
@@ -56,12 +58,13 @@ else
     shift
 fi
 
-args=`getopt c:k:p:v:y $*`
+args=`getopt c:j:k:p:v:y $*`
 
 for opt
 do
     case "$opt" in
         -c) NGXCERT=$2; shift; shift;;
+        -j) NGXLICENSE=$2; shift; shift;;
         -k) NGXKEY=$2;  shift; shift;;
         -p) NGXPATH=$2; shift; shift;;
         -v) VERSION=$2; shift; shift;;
@@ -92,29 +95,51 @@ if [ -z "$FILES" ]; then
     fi
 fi
 
+JWTREQ="NO"
+
+if [ "$ACTION" = 'install' ] || [ "$ACTION" = 'upgrade' ]; then
+    for pkg in $FILES; do
+        pkgname=$(basename "$pkg")
+        version=$(echo "$pkgname" | sed -n 's/^nginx-plus[_-]\([0-9]\+\).*$/\1/p')
+        if [ -n "$version" ]; then
+            if [ "$version" -ge 33 ]; then
+                JWTREQ="YES"
+            fi
+            break
+        fi
+    done
+fi
+
+if [ "$NGXLICENSE" = '' ] && ( [ "$ACTION" = 'install' ] || [ "$ACTION" = 'upgrade' ] ) && [ "$JWTREQ" = 'YES' ]; then
+    echo "-j option is mandatory for install/upgrade with NGINX Plus version >=33"
+    exit 1
+fi
+
 ARCH=x86_64
 [ `uname -m` = "aarch64" ] && ARCH=aarch64
 
+[ -z $REPOPREFIX ] && REPOPREFIX=https://pkgs.nginx.com/plus
+
 if [ -f /etc/redhat-release ]; then
     RELEASE=`grep -Eo 'release [0-9]{1}' /etc/redhat-release | cut -d' ' -f2`
-    REPOURL=https://pkgs.nginx.com/plus/centos/$RELEASE/$ARCH/RPMS/
+    REPOURL=$REPOPREFIX/centos/$RELEASE/$ARCH/RPMS/
     DISTRO="RHEL/CentOS"
     SUFFIX="el"
 elif [ -f /etc/os-release ] && fgrep SLES /etc/os-release; then
     RELEASE=`grep -Eo 'VERSION="[0-9]{2}' /etc/os-release | cut -d'"' -f2`
-    REPOURL=https://pkgs.nginx.com/plus/sles/$RELEASE/$ARCH/RPMS/
+    REPOURL=$REPOPREFIX/sles/$RELEASE/$ARCH/RPMS/
     DISTRO="SLES"
     SUFFIX="sles"
 elif [ -f /etc/os-release ] && fgrep -q -i amazon /etc/os-release; then
     RELEASE=`grep -Eo 'VERSION=".+"' /etc/os-release | cut -d'"' -f2`
     if [ "$RELEASE" = "2" ]; then
-        REPOURL=https://pkgs.nginx.com/plus/amzn2/2/$ARCH/RPMS/
+        REPOURL=$REPOPREFIX/amzn2/2/$ARCH/RPMS/
         SUFFIX="amzn2"
     elif [ "$RELEASE" = "2023" ]; then
-        REPOURL=https://pkgs.nginx.com/plus/amzn/2023/$ARCH/RPMS/
+        REPOURL=$REPOPREFIX/amzn/2023/$ARCH/RPMS/
         SUFFIX="amzn2023"
     else
-        REPOURL=https://pkgs.nginx.com/plus/amzn/latest/$ARCH/RPMS/
+        REPOURL=$REPOPREFIX/amzn/latest/$ARCH/RPMS/
         SUFFIX="amzn1"
         RELEASE="1"
     fi
@@ -124,10 +149,10 @@ elif [ -f /usr/bin/dpkg ]; then
     [ `uname -m` = "aarch64" ] && ARCH=arm64
     DISTRO=`grep -E "^ID=" /etc/os-release | cut -d '=' -f2 | tr '[:upper:]' '[:lower:]'`
     RELEASE=`grep VERSION_CODENAME /etc/os-release | cut -d '=' -f2`
-    REPOURL=https://pkgs.nginx.com/plus/$DISTRO/pool/nginx-plus/n/
+    REPOURL=$REPOPREFIX/$DISTRO/pool/nginx-plus/n/
 elif [ -x /sbin/apk ]; then
     RELEASE=`grep -Eo 'VERSION_ID=[0-9]\.[0-9]{1,2}' /etc/os-release | cut -d'=' -f2`
-    REPOURL=https://pkgs.nginx.com/plus/alpine/v$RELEASE/main/$ARCH/
+    REPOURL=$REPOPREFIX/alpine/v$RELEASE/main/$ARCH/
     DISTRO="alpine"
 else
     echo "Cannot determine your operating system."
@@ -144,7 +169,7 @@ if [ "$ACTION" = 'fetch' ] || [ "$ACTION" = 'list' ]; then
         ldd $(which wget) | grep -q libgnutls || \
             echo "" | openssl s_client -servername pkgs.nginx.com -cert $NGXCERT -key $NGXKEY -connect pkgs.nginx.com:443 >/dev/null 2>&1 || \
             WGET='wget -q --ciphers DEFAULT@SECLEVEL=1'
-            if ! $WGET -O /dev/null --certificate=$NGXCERT --private-key=$NGXKEY https://pkgs.nginx.com/plus/ ; then
+            if ! $WGET -O /dev/null --certificate=$NGXCERT --private-key=$NGXKEY $REPOPREFIX/ ; then
                 echo "Cannot connect to pkgs.nginx.com, please check certificate and key."
                 exit 1
             fi
@@ -244,6 +269,9 @@ fetch() {
 prepare() {
     mkdir -p $ABSPATH
     TMPDIR=`mktemp -dq /tmp/nginx-prefix.XXXXXXXX`
+    if [ "$JWTREQ" = 'YES' ]; then
+        cp $NGXLICENSE $TMPDIR/license.jwt
+    fi
     if [ "$DISTRO" = "debian" ] || [ "$DISTRO" = "ubuntu" ]; then
         for PKG in $FILES; do
             dpkg -x $PKG $TMPDIR
@@ -329,7 +357,11 @@ extract() {
             exit 1
         fi
         TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
-        if [ $TARGETVER -ge 31 ]; then
+        if [ $TARGETVER -ge 33 ]; then
+            mv $TMPDIR/license.jwt $ABSPATH/etc/nginx/license.jwt
+            echo "mgmt { license_token $ABSPATH/etc/nginx/license.jwt; state_path $ABSPATH/var/lib/nginx/; }" >> $ABSPATH/etc/nginx/nginx.conf
+        fi
+        if [ $TARGETVER -ge 31 -a $TARGETVER -lt 33 ]; then
             echo "mgmt { uuid_file $ABSPATH/var/lib/nginx/nginx.id; }" >> $ABSPATH/etc/nginx/nginx.conf
         fi
         echo "Installation finished. You may run nginx with this command:"
@@ -367,7 +399,14 @@ upgrade() {
         [ -d $TMPDIR/usr/lib64/ ] && cp -a $TMPDIR/usr/lib64/* $ABSPATH/usr/lib64/
         check_modules_deps
         TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
-        if [ $TARGETVER -ge 31 ]; then
+        if [ $TARGETVER -ge 33 ]; then
+            if ! $ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -T 2>&1 | grep 'license_token' | grep -vE '^(.*)#.*license_token' >/dev/null; then
+                sed -i '/uuid_file/d' $ABSPATH/etc/nginx/nginx.conf
+                cp $NGXLICENSE $ABSPATH/etc/nginx/license.jwt
+                echo "mgmt { license_token $ABSPATH/etc/nginx/license.jwt; state_path $ABSPATH/var/lib/nginx/; }" >> $ABSPATH/etc/nginx/nginx.conf
+            fi
+        fi
+        if [ $TARGETVER -ge 31 -a $TARGETVER -lt 33 ]; then
             if ! $ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -T 2>&1 | grep 'uuid_file' | grep -vE '^(.*)#.*uuid_file' >/dev/null; then
                 echo "mgmt { uuid_file $ABSPATH/var/lib/nginx/nginx.id; }" >> $ABSPATH/etc/nginx/nginx.conf
             fi
@@ -390,7 +429,7 @@ upgrade() {
 
 list() {
     if [ "$DISTRO" = 'ubuntu' ] || [ "$DISTRO" = 'debian' ]; then
-        REPOURL=https://pkgs.nginx.com/plus/$DISTRO/pool/nginx-plus/n/nginx-plus
+        REPOURL=$REPOPREFIX/$DISTRO/pool/nginx-plus/n/nginx-plus
     fi
     echo "Versions available for $DISTRO $RELEASE $ARCH:"
     if [ "$DISTRO" = 'alpine' ] ; then
