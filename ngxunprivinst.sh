@@ -121,7 +121,7 @@ ARCH=x86_64
 [ -z $REPOPREFIX ] && REPOPREFIX=https://pkgs.nginx.com/plus
 
 if [ -f /etc/redhat-release ]; then
-    RELEASE=`grep -Eo 'release [0-9]{1}' /etc/redhat-release | cut -d' ' -f2`
+    RELEASE=`grep -Eo 'release [0-9]{1,2}' /etc/redhat-release | cut -d' ' -f2`
     REPOURL=$REPOPREFIX/centos/$RELEASE/$ARCH/RPMS/
     DISTRO="RHEL/CentOS"
     SUFFIX="el"
