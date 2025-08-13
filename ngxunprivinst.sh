@@ -344,7 +344,8 @@ extract() {
         sed -i "s|\([ ^t]*root[ ^t]*\)/|\1$ABSPATH/|" $ABSPATH/etc/nginx/conf.d/default.conf
         sed -i "s|\([ ^t]*listen[ ^t]*\)80|\1$HTTPPORT|" $ABSPATH/etc/nginx/conf.d/default.conf
 
-        mkdir -p $ABSPATH/var/run
+        mkdir -p $ABSPATH/run
+        ln -sf ../run $ABSPATH/var/run
         mkdir -p $ABSPATH/var/log/nginx
         mkdir -p $ABSPATH/var/cache/nginx
         [ -d $ABSPATH/etc/logrotate.d ] && rm -rf $ABSPATH/etc/logrotate.d
