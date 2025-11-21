@@ -126,7 +126,7 @@ if [ -f /etc/redhat-release ]; then
     DISTRO="RHEL/CentOS"
     SUFFIX="el"
 elif [ -f /etc/os-release ] && fgrep -q SLES /etc/os-release; then
-    RELEASE=`grep -Eo 'VERSION="[0-9]{2}' /etc/os-release | cut -d'"' -f2`
+    RELEASE=`grep -Eo '^VERSION="[0-9]{2}' /etc/os-release | cut -d'"' -f2`
     REPOURL=$REPOPREFIX/sles/$RELEASE/$ARCH/RPMS/
     DISTRO="SLES"
     SUFFIX="sles"
