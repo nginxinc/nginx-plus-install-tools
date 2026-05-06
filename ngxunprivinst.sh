@@ -179,6 +179,27 @@ cleanup() {
     [ -d $TMPDIR ] && rm -rf $TMPDIR
 }
 
+# Extract the PLUS_RELEASE prefix from a package filename, used for module matching.
+# For new-style versions (>=37): "nginx-plus_37.0.0-1~bookworm_amd64.deb" -> "37.0"
+# For old-style versions (<37):  "nginx-plus_33-1~bookworm_amd64.deb"     -> "33"
+extract_plus_release() {
+    _pkg="$1"
+    _semver=$(echo "$_pkg" | grep -Eo 'nginx-plus[_-][0-9]+\.[0-9]+\.[0-9]+' | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [ -n "$_semver" ]; then
+        # New-style: extract major.minor (e.g., "37.0" from "37.0.0")
+        echo "$_semver" | cut -d'.' -f1-2
+    else
+        # Old-style: extract two-digit release number (e.g., "33")
+        echo "$_pkg" | grep -Eo 'nginx-plus[_-][0-9]+' | grep -Eo '[0-9]+' | head -1
+    fi
+}
+
+# Extract the major version number from a version string for integer comparisons.
+# "37.0.0" -> "37", "33" -> "33"
+extract_major_version() {
+    echo "$1" | cut -d'.' -f1
+}
+
 ask() {
     echo "$1 {y/N}"
     if [ "$FORCE" != 'YES' ]; then
@@ -198,7 +219,16 @@ fetch() {
     [ $a -eq 1 ] && echo "OS ($DISTRO $RELEASE $ARCH) is not supported." && exit 1
     if [ "$DISTRO" = 'ubuntu' ] || [ "$DISTRO" = 'debian' ]; then
         if [ -z $VERSION ]; then
-            NGXDEB=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/nginx-plus | cut -d '"' -f2 | egrep 'nginx-plus_[0-9][0-9]' | fgrep $RELEASE | fgrep $ARCH | sort | uniq | tail -1`
+            NGXDEB=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/nginx-plus | cut -d '"' -f2 | egrep 'nginx-plus_[0-9]+' | fgrep $RELEASE | fgrep $ARCH | sort -V | uniq | tail -1`
+        elif echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+            # Partial version like "37.0": resolve to latest matching 37.0.x package
+            NGXDEB=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/nginx-plus | cut -d '"' -f2 | egrep "nginx-plus_${VERSION}\.[0-9]+" | fgrep $RELEASE | fgrep $ARCH | sort -V | uniq | tail -1`
+            if [ -z "$NGXDEB" ]; then
+                echo "Wrong Nginx Plus version!"
+                list
+                cleanup
+                exit 1
+            fi
         else
             NGXDEB="nginx-plus_${VERSION}~${RELEASE}_${ARCH}.deb"
         fi
@@ -211,7 +241,7 @@ fetch() {
             cleanup
             exit 1
         fi
-        PLUS_RELEASE=$(echo $NGXDEB | grep -Eo '[0-9][0-9]' | head -1)
+        PLUS_RELEASE=$(extract_plus_release "$NGXDEB")
         MODULES_PATHS=$($WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL -O- | fgrep 'nginx-plus-module' | cut -d '"' -f2)
         for MODPATH in $MODULES_PATHS; do
             MODDEBS=$($WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/$MODPATH/ -O- | fgrep 'nginx-plus-module' | fgrep deb | fgrep -v dbg | cut -d '"' -f2 | fgrep $RELEASE | fgrep $ARCH | fgrep "_$PLUS_RELEASE") ||:
@@ -222,7 +252,16 @@ fetch() {
         done
     elif [ "$DISTRO" = 'alpine' ]; then
         if [ -z $VERSION ]; then
-            NGXAPK=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep 'nginx-plus-[0-9][0-9]' | sort | uniq | tail -1`
+            NGXAPK=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep 'nginx-plus-[0-9]+' | sort -V | uniq | tail -1`
+        elif echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+            # Partial version like "37.0": resolve to latest matching 37.0.x package
+            NGXAPK=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep "nginx-plus-${VERSION}\.[0-9]+-r[0-9]+" | sort -V | uniq | tail -1`
+            if [ -z "$NGXAPK" ]; then
+                echo "Wrong Nginx Plus version!"
+                list
+                cleanup
+                exit 1
+            fi
         else
             NGXAPK=nginx-plus-$VERSION.apk
         fi
@@ -235,7 +274,7 @@ fetch() {
             cleanup
             exit 1
         fi
-        PLUS_RELEASE=$(echo $NGXAPK | grep -Eo '[0-9][0-9]' | head -1)
+        PLUS_RELEASE=$(extract_plus_release "$NGXAPK")
         MODULES_APKS=$($WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/ -O- | fgrep nginx-plus-module | fgrep -v debug | fgrep "$PLUS_RELEASE." | cut -d '"' -f2) ||:
         for MODAPK in $MODULES_APKS; do
             echo "Downloading $MODAPK..."
@@ -243,7 +282,16 @@ fetch() {
         done
     else
         if [ -z $VERSION ]; then
-            NGXRPM=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep 'nginx-plus-[0-9][0-9]' | sort | uniq | tail -1`
+            NGXRPM=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep 'nginx-plus-[0-9]+' | sort -V | uniq | tail -1`
+        elif echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+            # Partial version like "37.0": resolve to latest matching 37.0.x package
+            NGXRPM=`$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | cut -d '"' -f2 | egrep "nginx-plus-${VERSION}\.[0-9]+-[0-9]+" | fgrep $ARCH | sort -V | uniq | tail -1`
+            if [ -z "$NGXRPM" ]; then
+                echo "Wrong Nginx Plus version!"
+                list
+                cleanup
+                exit 1
+            fi
         else
             echo $VERSION | egrep -q '1[567]\-' && [ "$RELEASE" = "7" ] && RELEASE="7_4"
             NGXRPM=nginx-plus-$VERSION.$SUFFIX$RELEASE.ngx.$ARCH.rpm
@@ -257,7 +305,7 @@ fetch() {
             cleanup
             exit 1
         fi
-        PLUS_RELEASE=$(echo $NGXRPM | grep -Eo '[0-9][0-9]' | head -1)
+        PLUS_RELEASE=$(extract_plus_release "$NGXRPM")
         MODULES_RPMS=$($WGET --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL/ -O- | fgrep nginx-plus-module | fgrep -v debug | fgrep "$PLUS_RELEASE+" | cut -d '"' -f2) ||:
         for MODRPM in $MODULES_RPMS; do
             echo "Downloading $MODRPM..."
@@ -357,7 +405,7 @@ extract() {
             echo "Use command \"ldd $ABSPATH/usr/sbin/nginx\" to check unmet dependencies." && \
             exit 1
         fi
-        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
+        TARGETVER=$(extract_major_version "$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')")
         if [ $TARGETVER -ge 33 ]; then
             mv $TMPDIR/license.jwt $ABSPATH/etc/nginx/license.jwt
             echo "mgmt { license_token $ABSPATH/etc/nginx/license.jwt; state_path $ABSPATH/var/lib/nginx/; }" >> $ABSPATH/etc/nginx/nginx.conf
@@ -399,7 +447,7 @@ upgrade() {
         [ -d $TMPDIR/usr/lib/ ] && cp -a $TMPDIR/usr/lib/* $ABSPATH/usr/lib/
         [ -d $TMPDIR/usr/lib64/ ] && cp -a $TMPDIR/usr/lib64/* $ABSPATH/usr/lib64/
         check_modules_deps
-        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
+        TARGETVER=$(extract_major_version "$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')")
         if [ $TARGETVER -ge 33 ]; then
             if ! $ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -T 2>&1 | grep 'license_token' | grep -vE '^(.*)#.*license_token' >/dev/null; then
                 sed -i '/uuid_file/d' $ABSPATH/etc/nginx/nginx.conf
@@ -434,9 +482,9 @@ list() {
     fi
     echo "Versions available for $DISTRO $RELEASE $ARCH:"
     if [ "$DISTRO" = 'alpine' ] ; then
-        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -Eo "nginx-plus-[0-9][0-9]-r[1-9]" | sed 's/nginx-plus-//g' | sort | uniq
+        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -Eo "nginx-plus-[0-9]+(\.[0-9]+)*-r[0-9]+" | sed 's/nginx-plus-//g' | sort -V | uniq
     else
-    	$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -E "nginx-plus[_-][0-9][0-9]-[1-9]" | fgrep $ARCH | fgrep $RELEASE | grep -Eo '[0-9][0-9]-[1-9]' | sort | uniq
+        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -E "nginx-plus[_-][0-9]+(\.[0-9]+)*-[0-9]+" | fgrep $ARCH | fgrep $RELEASE | grep -Eo '[0-9]+(\.[0-9]+)*-[0-9]+' | sort -V | uniq
     fi
 }
 
