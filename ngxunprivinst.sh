@@ -147,8 +147,8 @@ elif [ -f /etc/os-release ] && fgrep -q -i amazon /etc/os-release; then
 elif [ -f /usr/bin/dpkg ]; then
     ARCH=amd64
     [ `uname -m` = "aarch64" ] && ARCH=arm64
-    DISTRO=`grep -E "^ID=" /etc/os-release | cut -d '=' -f2 | tr '[:upper:]' '[:lower:]'`
-    RELEASE=`grep VERSION_CODENAME /etc/os-release | cut -d '=' -f2`
+    DISTRO=`grep -E "^ID=" /etc/os-release | cut -d '=' -f2 | tr '[:upper:]' '[:lower:]' | tr -d '"'`
+    RELEASE=`grep -E "^VERSION_CODENAME=" /etc/os-release | cut -d '=' -f2 | tr -d '"'`
     REPOURL=$REPOPREFIX/$DISTRO/pool/nginx-plus/n/
 elif [ -x /sbin/apk ]; then
     RELEASE=`grep -Eo 'VERSION_ID=[0-9]\.[0-9]{1,2}' /etc/os-release | cut -d'=' -f2`
@@ -434,9 +434,9 @@ list() {
     fi
     echo "Versions available for $DISTRO $RELEASE $ARCH:"
     if [ "$DISTRO" = 'alpine' ] ; then
-        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -Eo "nginx-plus-[0-9][0-9]-r[1-9]" | sed 's/nginx-plus-//g' | sort | uniq
+        $WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -Eo "nginx-plus-[0-9]+(\.[0-9]+)*-r[1-9]" | sed 's/nginx-plus-//g' | sort | uniq
     else
-    	$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -E "nginx-plus[_-][0-9][0-9]-[1-9]" | fgrep $ARCH | fgrep $RELEASE | grep -Eo '[0-9][0-9]-[1-9]' | sort | uniq
+    	$WGET -O- --certificate=$NGXCERT --private-key=$NGXKEY $REPOURL | grep -E "nginx-plus[_-][0-9]+(\.[0-9]+)*-[0-9]+" | fgrep $ARCH | fgrep $RELEASE | grep -Eo '[0-9]+(\.[0-9]+)*-[0-9]+' | sort | uniq
     fi
 }
 
