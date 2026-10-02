@@ -357,7 +357,7 @@ extract() {
             echo "Use command \"ldd $ABSPATH/usr/sbin/nginx\" to check unmet dependencies." && \
             exit 1
         fi
-        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
+        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r' | cut -d'.' -f1)
         if [ $TARGETVER -ge 33 ]; then
             mv $TMPDIR/license.jwt $ABSPATH/etc/nginx/license.jwt
             echo "mgmt { license_token $ABSPATH/etc/nginx/license.jwt; state_path $ABSPATH/var/lib/nginx/; }" >> $ABSPATH/etc/nginx/nginx.conf
@@ -399,7 +399,7 @@ upgrade() {
         [ -d $TMPDIR/usr/lib/ ] && cp -a $TMPDIR/usr/lib/* $ABSPATH/usr/lib/
         [ -d $TMPDIR/usr/lib64/ ] && cp -a $TMPDIR/usr/lib64/* $ABSPATH/usr/lib64/
         check_modules_deps
-        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r')
+        TARGETVER=$($ABSPATH/usr/sbin/nginx -v 2>&1 | cut -d '(' -f 2 | cut -d ')' -f 1 | cut -d'-' -f 3 | tr -d 'r' | cut -d'.' -f1)
         if [ $TARGETVER -ge 33 ]; then
             if ! $ABSPATH/usr/sbin/nginx -p $ABSPATH/etc/nginx -c nginx.conf -T 2>&1 | grep 'license_token' | grep -vE '^(.*)#.*license_token' >/dev/null; then
                 sed -i '/uuid_file/d' $ABSPATH/etc/nginx/nginx.conf
