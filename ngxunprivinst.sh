@@ -164,9 +164,9 @@ if [ "$ACTION" = 'fetch' ] || [ "$ACTION" = 'list' ]; then
         exit 1
     else
         # check that wget is not a part of busybox package
-        [ `find $(which wget) -type f | wc -l` -eq 0 ] && echo "Please install wget package." && exit 1
+        [ `find $(command -v wget) -type f | wc -l` -eq 0 ] && echo "Please install wget package." && exit 1
         # lower security level for certificate check
-        ldd $(which wget) | grep -q libgnutls || \
+        ldd $(command -v wget) | grep -q libgnutls || \
             echo "" | openssl s_client -servername pkgs.nginx.com -cert $NGXCERT -key $NGXKEY -connect pkgs.nginx.com:443 >/dev/null 2>&1 || \
             WGET='wget -q --ciphers DEFAULT@SECLEVEL=1'
             if ! $WGET -O /dev/null --certificate=$NGXCERT --private-key=$NGXKEY $REPOPREFIX/ ; then
